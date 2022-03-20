@@ -13,6 +13,9 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from distutils.version import StrictVersion
 
+from zipfile import ZIP_STORED, ZipFile
+import shutil
+
 from lib.cuckoo.common.abstracts import Auxiliary, Feed, LibVirtMachinery, Machinery, Processing, Report, Signature
 from lib.cuckoo.common.config import AnalysisConfig, Config
 from lib.cuckoo.common.constants import CUCKOO_ROOT, CUCKOO_VERSION
@@ -23,7 +26,7 @@ from lib.cuckoo.common.exceptions import (
     CuckooProcessingError,
     CuckooReportError,
 )
-from lib.cuckoo.common.suricata_detection import et_categories, get_suricata_family
+from lib.cuckoo.common.utils import add_family_detection
 from lib.cuckoo.core.database import Database
 
 try:
@@ -290,8 +293,6 @@ class RunProcessing(object):
         else:
             log.info("No processing modules loaded")
 
-        self._detect_family()
-
         # Add temp_processing stats to global processing stats
         if self.results["temp_processing_stats"]:
             for plugin_name in self.results["temp_processing_stats"]:
@@ -320,45 +321,6 @@ class RunProcessing(object):
             log.info("Logs folder doesn't exist, maybe something with with analyzer folder, any change?")
 
         return self.results
-
-    def _detect_family(self):
-        if not self.cfg.detections.enabled:
-            return
-
-        family = ""
-        malfamily_tag = ""
-
-        if self.cfg.detections.yara:
-            family = self.results.get("detections", "")
-            if family:
-                malfamily_tag = "Yara"
-
-        if self.cfg.detections.suricata and not family:
-            for alert in self.results.get("suricata", {}).get("alerts", []):
-                if alert.get("signature", "").startswith(et_categories):
-                    family = get_suricata_family(alert["signature"])
-                    if family:
-                        malfamily_tag = "Suricata"
-                        break
-
-        if self.results["info"]["category"] == "file":
-            if self.cfg.detections.virustotal and not family:
-                family = self.results.get("virustotal", {}).get("detection", "")
-                if family:
-                    malfamily_tag = "VirusTotal"
-
-            if self.cfg.detections.clamav and not family:
-                for detection in self.results.get("target", {}).get("file", {}).get("clamav", []):
-                    if detection.startswith("Win.Trojan."):
-                        words = re.findall(r"[A-Za-z0-9]+", detection)
-                        family = words[2]
-                        if family:
-                            malfamily_tag = "ClamAV"
-                            break
-
-        if family:
-            self.results["detections"] = family
-            self.results["malfamily_tag"] = malfamily_tag
 
 
 class RunSignatures(object):
@@ -484,6 +446,8 @@ class RunSignatures(object):
                 log.debug('Analysis matched signature "%s"', current.name)
                 # Return information on the matched signature.
                 return current.as_result()
+        except KeyError as e:
+            log.error('Failed to run signature "%s": %s', current.name, e)
         except NotImplementedError:
             return None
         except Exception as e:
@@ -642,8 +606,7 @@ class RunSignatures(object):
         ):
             for match in matched:
                 if match.get("families"):
-                    self.results["detections"] = match["families"][0]
-                    self.results["malfamily_tag"] = "Behavior"
+                    add_family_detection(self.results, match["families"][0], "Behavior", "")
                     break
 
 
@@ -736,6 +699,27 @@ class RunReporting:
         except Exception as e:
             log.exception('Failed to run the reporting module "%s": %s', current.__class__.__name__, e)
 
+    # From: lib/cuckoo/core/guest.py analyzer_zipfile()
+    def compress(self):
+        root = self.analysis_path
+        root_len = len(os.path.abspath(root))
+
+        outname = root+'.zip'
+
+        if not os.path.exists(root):
+            return
+
+        with ZipFile(outname, 'w') as zip_file:
+            for root, dirs, files in os.walk(root):
+                archive_root = os.path.abspath(root)[root_len:]
+                for name in files:
+                    path = os.path.join(root, name)
+                    archive_name = os.path.join(archive_root, name)
+                    zip_file.write(path, archive_name)
+
+        # Remove analysis folder
+        shutil.rmtree(self.analysis_path)
+
     def run(self):
         """Generates all reports.
         @raise CuckooReportError: if a report module fails.
@@ -757,6 +741,9 @@ class RunReporting:
         else:
             log.info("No reporting modules loaded")
 
+        # Compress to save space
+        log.info("Compressing %s to save space", self.analysis_path)
+        self.compress()
 
 class GetFeeds(object):
     """Feed Download and Parsing Engine

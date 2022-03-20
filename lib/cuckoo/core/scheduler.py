@@ -345,6 +345,10 @@ class AnalysisManager(threading.Thread):
 
             options["clock"] = self.db.update_clock(self.task.id)
             self.db.guest_set_status(self.task.id, "starting")
+
+            # Sleep to wait for VM to start up
+            time.sleep(30)
+
             # Start the analysis.
             guest.start_analysis(options)
             if self.db.guest_get_status(self.task.id) == "starting":

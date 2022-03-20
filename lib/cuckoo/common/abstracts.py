@@ -429,6 +429,14 @@ class LibVirtMachinery(Machinery):
                 raise CuckooMachineError(msg)
             finally:
                 self._disconnect(conn)
+        # NOTE: evan: if you have a backing file for KVM
+        elif vm_info.snapshot and vm_info.snapshot == 'IGNORE':
+            try:
+                self.vms[label].create()
+            except libvirt.libvirtError:
+                raise CuckooMachineError(f"Unable to start virtual machine {label}")
+            finally:
+                self._disconnect(conn)
         elif self._get_snapshot(label):
             snapshot = self._get_snapshot(label)
             log.debug("Using snapshot %s for virtual machine %s", snapshot.getName(), label)

@@ -309,7 +309,7 @@ class GuestManager(object):
             self.post("/store", files=files, data=data)
 
         # check for support files and upload them to guest.
-        self.upload_support_files(options)
+        #self.upload_support_files(options)
 
         # Debug analyzer.py in vm
         if "CAPE_DBG" in os.environ:
