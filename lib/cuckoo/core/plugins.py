@@ -13,8 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from distutils.version import StrictVersion
 
-from zipfile import ZIP_STORED, ZipFile
-import shutil
+import gzip
 
 from lib.cuckoo.common.abstracts import Auxiliary, Feed, LibVirtMachinery, Machinery, Processing, Report, Signature
 from lib.cuckoo.common.config import AnalysisConfig, Config
@@ -739,26 +738,26 @@ class RunReporting:
         except Exception as e:
             log.exception('Failed to run the reporting module "%s": %s', current.__class__.__name__, e)
 
-    # From: lib/cuckoo/core/guest.py analyzer_zipfile()
+    # Compresses and removes analysis files to save space
     def compress(self):
-        root = self.analysis_path
-        root_len = len(os.path.abspath(root))
+        analysis_root = self.analysis_path
 
-        outname = root+'.zip'
+        # Gzip report.json
+        reportFN = os.path.join(analysis_root,'reports','report.json')
+        zipFN = reportFN + '.gz'
+        with open(reportFN,'rb') as fr, gzip.open(zipFN,'wb') as fw:
+            fw.write(fr.read())
 
-        if not os.path.exists(root):
-            return
+        analysisFN = os.path.join(analysis_root,'analysis.log')
 
-        with ZipFile(outname, 'w') as zip_file:
-            for root, dirs, files in os.walk(root):
-                archive_root = os.path.abspath(root)[root_len:]
-                for name in files:
-                    path = os.path.join(root, name)
-                    archive_name = os.path.join(archive_root, name)
-                    zip_file.write(path, archive_name)
+        allowlist = [zipFN,analysisFN]
 
-        # Remove analysis folder
-        shutil.rmtree(self.analysis_path)
+        # Remove everything else
+        for root, dirs, files in os.walk(analysis_root):
+            for fn in files:
+                path = os.path.join(root,fn)
+                if path not in allowlist:
+                    os.remove(path)
 
     def run(self):
         """Generates all reports.
